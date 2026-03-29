@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import pydeck as pdk
+import requests # 新增：用來向氣象署發送請求的套件
 
 st.set_page_config(page_title="我的百岳紀錄 App", layout="wide")
 st.title("🏔️ 台灣百岳登頂紀錄與 3D 版圖")
@@ -13,7 +14,23 @@ if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
 # ==========================================
-# 內建百岳經緯度資料庫 (供系統自動補齊使用)
+# 氣象署 API 資料抓取與快取 (Cache)
+# 設定快取 1 小時 (3600秒)，避免頻繁重整網頁導致 API 額度被扣光
+# ==========================================
+@st.cache_data(ttl=3600)
+def get_mountain_weather(api_key):
+    # F-B0053-031 是氣象署的高山/遊憩區預報資料集
+    url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-B0053-031?Authorization={api_key}&format=JSON"
+    try:
+        resp = requests.get(url)
+        data = resp.json()
+        # 提取出所有山區的位置資料
+        return data['records']['locations'][0]['location']
+    except Exception as e:
+        return None
+
+# ==========================================
+# 內建百岳經緯度資料庫
 # ==========================================
 BAIYUE_COORDS = {
     '玉山主峰': [120.957, 23.470], '雪山主峰': [121.231, 24.383], '玉山東峰': [120.963, 23.471],
@@ -68,10 +85,6 @@ else:
             
     if df is not None and not df.empty:
         df.columns = df.columns.str.strip()
-        
-        # ==========================================
-        # 智慧型座標自動填寫系統
-        # ==========================================
         needs_save = False
         if '經度' not in df.columns:
             df['經度'] = None
@@ -80,7 +93,6 @@ else:
             df['緯度'] = None
             needs_save = True
             
-        # 掃描每一筆資料，如果沒有經緯度，就從內建字典抓取
         for idx, row in df.iterrows():
             peak_name = str(row.get('山名', '')).strip()
             if pd.isna(row['經度']) or pd.isna(row['緯度']):
@@ -89,12 +101,10 @@ else:
                     df.at[idx, '緯度'] = BAIYUE_COORDS[peak_name][1]
                     needs_save = True
                     
-        # 如果有更新座標，自動存檔並重整畫面
         if needs_save:
             df.to_csv(FILE_PATH, index=False, encoding='utf-8-sig', sep=',')
             st.rerun()
 
-        # 整理基礎欄位狀態
         if '完登狀態' in df.columns:
             df['完登狀態'] = df['完登狀態'].astype(str).str.strip().str.upper() == 'TRUE'
         if '登頂日期' not in df.columns:
@@ -102,14 +112,13 @@ else:
         else:
             df['登頂日期'] = df['登頂日期'].fillna("")
 
-        # 計算進度
         completed_count = df[df['完登狀態'] == True]['山名'].nunique() if '山名' in df.columns else 0
         total_count = 100
         st.subheader(f"目前的完登進度：{completed_count} / {total_count}")
         st.progress(int((completed_count / total_count) * 100))
 
-       # ==========================================
-        # 🗺️ 3D 百岳分佈與完登版圖 (重點功能)
+        # ==========================================
+        # 🗺️ 3D 百岳分佈與完登版圖
         # ==========================================
         st.divider()
         st.write("### 🗺️ 台灣百岳 3D 完登版圖")
@@ -117,27 +126,22 @@ else:
         map_df = df.dropna(subset=['經度', '緯度']).copy()
         
         if not map_df.empty:
-            # 1. 設定顏色：已完登為亮橘金，未完登為半透明純白
             map_df['color'] = map_df['完登狀態'].apply(
                 lambda x: [255, 170, 0, 255] if x else [255, 255, 255, 120]
             )
-            
-            # 2. 👉 新增這一行：將 True/False 轉換成好看的中文文字
             map_df['狀態顯示'] = map_df['完登狀態'].apply(
                 lambda x: "✅ 已完登" if x else "🎯 未完登"
             )
             
-            # 設定散佈圖層
             layer = pdk.Layer(
                 "ScatterplotLayer",
                 data=map_df,
                 get_position=["經度", "緯度"],
                 get_fill_color="color",
-                get_radius=2500, # 圓點半徑
+                get_radius=2500, 
                 pickable=True
             )
             
-            # 建立 3D 傾斜視角
             view_state = pdk.ViewState(
                 longitude=120.9573,
                 latitude=23.4700,
@@ -146,18 +150,74 @@ else:
                 bearing=0
             )
             
-            # 渲染地圖
+            # 安全讀取 Mapbox 金鑰
+            try:
+                mapbox_key = st.secrets["MAPBOX_API_KEY"]
+            except:
+                mapbox_key = ""
+
             st.pydeck_chart(pdk.Deck(
                 layers=[layer],
                 initial_view_state=view_state,
                 map_provider="mapbox", 
                 map_style="mapbox://styles/mapbox/satellite-streets-v12", 
-               api_keys={"mapbox": st.secrets["MAPBOX_API_KEY"]}, 
-                # 3. 👉 將 tooltip 裡的 {完登狀態} 改成讀取我們剛剛建立的 {狀態顯示}
+                api_keys={"mapbox": mapbox_key}, 
                 tooltip={"text": "{山名}\n海拔: {海拔(m)}m\n狀態: {狀態顯示}"}
             ))
+
+        # ==========================================
+        # ⛅ 氣象署高山預報站 (全新整合區塊)
+        # ==========================================
+        st.write("### ⛅ 近期高山天氣預報 (中央氣象署)")
+        try:
+            cwa_key = st.secrets["CWA_API_KEY"]
+        except:
+            cwa_key = None
+            
+        if cwa_key:
+            weather_data = get_mountain_weather(cwa_key)
+            if weather_data:
+                # 撈出氣象署有提供預報的「山區名稱」
+                mountain_names = [loc['locationName'] for loc in weather_data]
+                
+                # 智慧預設：將預設選項設為「關山」，方便做南一段的功課
+                default_idx = mountain_names.index("關山") if "關山" in mountain_names else 0
+                
+                selected_mt = st.selectbox("請選擇鄰近氣象站（南一段行程建議選擇「關山」）：", mountain_names, index=default_idx)
+                
+                # 取出所選山區的數據
+                target_data = next((loc for loc in weather_data if loc['locationName'] == selected_mt), None)
+                if target_data:
+                    try:
+                        elements = target_data['weatherElement']
+                        wx_list = next(e['time'] for e in elements if e['elementName'] == 'Wx')
+                        pop_list = next(e['time'] for e in elements if e['elementName'] == 'PoP12h')
+                        mint_list = next(e['time'] for e in elements if e['elementName'] == 'MinT')
+                        maxt_list = next(e['time'] for e in elements if e['elementName'] == 'MaxT')
+                        
+                        forecasts = []
+                        # 顯示未來 6 個時段的預報 (約三天份的精準資料)
+                        for i in range(min(6, len(wx_list))):
+                            start_time = wx_list[i]['startTime'][5:16] # 擷取 MM-DD HH:mm
+                            wx_val = wx_list[i]['elementValue'][0]['value']
+                            pop_val = pop_list[i]['elementValue'][0]['value'] if i < len(pop_list) else "-"
+                            mint_val = mint_list[i]['elementValue'][0]['value'] if i < len(mint_list) else "-"
+                            maxt_val = maxt_list[i]['elementValue'][0]['value'] if i < len(maxt_list) else "-"
+                            
+                            forecasts.append({
+                                "預報時間": start_time,
+                                "天氣狀態": wx_val,
+                                "降雨機率(%)": pop_val,
+                                "氣溫(°C)": f"{mint_val} ~ {maxt_val}"
+                            })
+                        
+                        st.dataframe(pd.DataFrame(forecasts), use_container_width=True, hide_index=True)
+                    except Exception as e:
+                        st.error("氣象資料格式解析發生錯誤，氣象署可能調整了資料結構。")
+            else:
+                st.warning("無法取得氣象資料，請檢查 API 授權碼是否正確或網路是否連線。")
         else:
-            st.info("地圖載入中或座標資料庫未生效...")
+            st.info("💡 尚未在 secrets.toml 設定氣象署 API 金鑰，請先完成設定以解鎖天氣功能。")
 
         # ==========================================
         # 快速尋找與打卡區塊
@@ -167,7 +227,7 @@ else:
         
         col1, col2 = st.columns([2, 1])
         with col1:
-            search_term = st.text_input("輸入山名搜尋 (例如：玉山、雪山)", "")
+            search_term = st.text_input("輸入山名搜尋 (例如：玉山、關山)", "")
         with col2:
             filter_status = st.selectbox("狀態篩選", ["全部百岳", "🎯 未完登", "✅ 已完登"])
 

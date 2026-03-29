@@ -10,7 +10,7 @@ from datetime import datetime
 # 1. 基礎設定與輔助函數
 # ==========================================
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-st.set_page_config(page_title="百岳戰情室 x 上河配速", layout="wide")
+st.set_page_config(page_title="百岳紀錄&氣象情報 x 上河配速", layout="wide")
 
 FILE_PATH = 'baiyue_tracking.csv'
 
@@ -32,13 +32,13 @@ def parse_sh_minutes(time_val):
 # 2. 側邊導覽列 (雙系統切換)
 # ==========================================
 st.sidebar.title("🧭 導航選單")
-page = st.sidebar.radio("切換功能", ["🗺️ 百岳地圖與戰情室", "⏱️ 上河配速追蹤系統"])
+page = st.sidebar.radio("切換功能", ["🗺️ 百岳紀錄&氣象情報", "⏱️ 上河配速追蹤系統"])
 
 # ==========================================
 # 3. 系統 A：百岳地圖與戰情室
 # ==========================================
-if page == "🗺️ 百岳地圖與戰情室":
-    st.title("🏔️ 台灣百岳登頂紀錄與戰情室")
+if page == "🗺️ 百岳紀錄&氣象情報":
+    st.title("🏔️ 台灣百岳登頂紀錄與戰情室氣象情報")
 
     BAIYUE_COORDS = {
         '玉山主峰': [120.957, 23.470], '雪山主峰': [121.231, 24.383], '關山': [120.908, 23.243],
@@ -72,12 +72,12 @@ if page == "🗺️ 百岳地圖與戰情室":
         layer = pdk.Layer("ScatterplotLayer", data=map_df, get_position=["經度", "緯度"], get_fill_color="color", get_radius=2500, pickable=True)
         st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state, map_provider="mapbox", map_style="mapbox://styles/mapbox/satellite-streets-v12", api_keys={"mapbox": st.secrets.get("MAPBOX_API_KEY", "")}, tooltip={"text": "{山名}\n海拔: {海拔(m)}m"}))
 
-        # 登山戰情室
+        # 氣象情報
         st.divider()
-        st.write("### 📡 登山戰情室")
+        st.write("### 📡 氣象情報")
         tab1, tab2 = st.tabs(["⛰️ 官方登山預報網頁", "🌧️ NCDR 降雨監測"])
         with tab1:
-            st.caption("即時顯示：中央氣象署 - 南一段(關山)區域專業登山預報")
+            st.caption("即時顯示：中央氣象署")
             components.iframe("https://www.cwa.gov.tw/V8/C/L/Mountain/Mountain.html?PID=D080", height=650, scrolling=True)
         with tab2:
             st.caption("即時顯示：NCDR 全台降雨雷達回波趨勢")
@@ -104,46 +104,26 @@ if page == "🗺️ 百岳地圖與戰情室":
             st.rerun()
 
 # ==========================================
-# 4. 系統 B：上河配速追蹤系統
+# 4. 系統 B：上河配速追蹤系統 (極簡上傳版)
 # ==========================================
 elif page == "⏱️ 上河配速追蹤系統":
     st.title("⏱️ 上河配速追蹤系統")
     st.write("### 📥 載入行程計畫")
-    col_opt1, col_opt2 = st.columns(2)
-
-    with col_opt1:
-        ROUTE_LIBRARY = {
-            "自定義空白表單": [{"分段地標": "起點", "上河步程": 0, "休息": 0}],
-            "南一段 (進涇橋起)": [
-                {"分段地標": "進涇橋登山口", "上河步程": 0, "休息": 0},
-                {"分段地標": "庫哈諾辛山屋", "上河步程": 155, "休息": 15},
-                {"分段地標": "▲庫哈諾辛山", "上河步程": 90, "休息": 10},
-                {"分段地標": "▲關山", "上河步程": 340, "休息": 20},
-                {"分段地標": "2920鞍營地", "上河步程": 210, "休息": 0},
-                {"分段地標": "▲海諾南山", "上河步程": 150, "休息": 15},
-                {"分段地標": "▲小關山", "上河步程": 360, "休息": 20},
-                {"分段地標": "雲馬鞍營地", "上河步程": 230, "休息": 0},
-                {"分段地標": "▲馬西巴秀山", "上河步程": 80, "休息": 10},
-                {"分段地標": "三叉峰營地", "上河步程": 480, "休息": 0},
-                {"分段地標": "▲卑南主山", "上河步程": 40, "休息": 15},
-            ]
-        }
-        selected_route = st.selectbox("選項一：選擇內建路線", list(ROUTE_LIBRARY.keys()))
-
-    with col_opt2:
-        uploaded_file = st.file_uploader("選項二：上傳你的行程 CSV 檔 (支援含有表頭說明的檔案)", type=["csv"])
+    st.caption("請上傳從 Google Sheet 範本下載的 CSV 檔 (需包含『分段地標』與『上河步程』欄位)")
+    
+    uploaded_file = st.file_uploader("上傳你的行程 CSV 檔", type=["csv"], label_visibility="collapsed")
 
     # 初始化 session_state
     if 'hike_df' not in st.session_state:
-        st.session_state.hike_df = pd.DataFrame(ROUTE_LIBRARY["自定義空白表單"])
-        st.session_state.last_route = "自定義空白表單"
+        st.session_state.hike_df = pd.DataFrame([{"分段地標": "起點", "上河步程": 0, "休息": 0, "抵達時刻": ""}])
+        st.session_state.has_uploaded = False
 
-    # 優先處理上傳的 CSV 檔案 (智慧掃描表頭)
-    if uploaded_file is not None:
+    # 處理上傳的 CSV 檔案 (智慧掃描表頭，相容嘉明湖範本)
+    if uploaded_file is not None and not st.session_state.get('has_uploaded'):
         try:
             raw_df = pd.read_csv(uploaded_file, header=None)
             header_idx = -1
-            # 智慧掃描：尋找包含「分段地標」的那一行作為標題
+            # 智慧掃描：向下尋找包含「分段地標」的那一行作為標題
             for i, row in raw_df.iterrows():
                 if "分段地標" in str(row.values):
                     header_idx = i
@@ -162,21 +142,21 @@ elif page == "⏱️ 上河配速追蹤系統":
                         "休息": 0 
                     })
                 st.session_state.hike_df = pd.DataFrame(parsed_data)
+                st.session_state.has_uploaded = True # 標記為已上傳，避免重複解析
                 st.success("✅ 行程檔載入成功！")
             else:
-                st.error("CSV 檔案中找不到包含『分段地標』的標題行。")
+                st.error("CSV 檔案中找不到包含『分段地標』的標題行。請確認格式與範本相符。")
         except Exception as e:
             st.error(f"檔案讀取失敗：{e}")
 
-    elif selected_route != st.session_state.get('last_route'):
-        df = pd.DataFrame(ROUTE_LIBRARY[selected_route])
-        df["抵達時刻"] = ""
-        st.session_state.hike_df = df
-        st.session_state.last_route = selected_route
+    # 若使用者按了 X 清除檔案，則重置狀態
+    if uploaded_file is None:
+        st.session_state.has_uploaded = False
 
     st.write("### 📝 實時配速紀錄表")
-    st.caption("💡 可動態新增列，或直接在『實際抵達』輸入 HH:MM 格式時間")
+    st.caption("💡 可動態新增列，或直接在『實際抵達』輸入 HH:MM 格式時間 (例如：08:45)")
 
+    # 動態資料編輯器
     edited_df = st.data_editor(
         st.session_state.hike_df,
         num_rows="dynamic",
@@ -200,16 +180,18 @@ elif page == "⏱️ 上河配速追蹤系統":
                 t_prev = calc_df.iloc[i-1]["抵達時刻"]
                 sh_min = calc_df.iloc[i].get("上河步程", 0)
                 
+                # 只有當前後兩站都有填時間時，才進行計算
                 if pd.notna(t_curr) and t_curr != "" and pd.notna(t_prev) and t_prev != "":
                     fmt = "%H:%M"
-                    # 若跨日，需加上日期處理邏輯，此處採簡單時間差
+                    # 處理時間差 (包含跨夜邏輯)
                     delta = datetime.strptime(str(t_curr), fmt) - datetime.strptime(str(t_prev), fmt)
                     actual_min = delta.total_seconds() / 60
-                    if actual_min < 0: actual_min += 24 * 60 # 處理跨越午夜的情況
+                    if actual_min < 0: actual_min += 24 * 60 
                     
                     rest_min = calc_df.iloc[i-1].get("休息", 0)
                     if pd.isna(rest_min): rest_min = 0
                     
+                    # 純步行時間 = 實際花費時間 - 上一站的休息時間
                     walk_min = actual_min - float(rest_min)
                     
                     if sh_min > 0:
@@ -217,6 +199,7 @@ elif page == "⏱️ 上河配速追蹤系統":
                         calc_df.at[i, "分段係數"] = c
                         coeffs.append(c)
             
+            # 顯示分析結果
             if coeffs:
                 avg_c = round(sum(coeffs) / len(coeffs), 2)
                 st.divider()
@@ -231,7 +214,9 @@ elif page == "⏱️ 上河配速追蹤系統":
                 col2.metric("體能狀態推估", status)
                 
                 st.write("#### 📈 分段詳細數據")
-                st.dataframe(calc_df[calc_df["抵達時刻"].astype(str) != ""], use_container_width=True)
+                # 過濾出有打卡時間的欄位來顯示
+                display_result = calc_df[calc_df["抵達時刻"].astype(str) != ""].copy()
+                st.dataframe(display_result[["分段地標", "抵達時刻", "休息", "上河步程", "分段係數"]], use_container_width=True)
             else:
                 st.warning("請至少輸入兩個連續 CP 點的『抵達時刻』以進行計算。")
                 

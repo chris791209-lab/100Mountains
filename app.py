@@ -5,7 +5,6 @@ import pydeck as pdk
 import requests
 import urllib3
 
-# 關閉跳過 SSL 安檢時會彈出的煩人警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 st.set_page_config(page_title="我的百岳紀錄 App", layout="wide")
@@ -18,14 +17,14 @@ if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
 # ==========================================
-# 氣象署 API 資料抓取與快取 (無敵跳過安檢版)
+# 氣象署 API 資料抓取 (改用最穩定的全台縣市預報 F-C0032-001)
 # ==========================================
 @st.cache_data(ttl=3600)
-def get_cwa_mountain_weather(api_key):
+def get_cwa_general_weather(api_key):
     clean_key = api_key.strip()
-    url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-B0053-031?Authorization={clean_key}&format=JSON"
+    # 換成 100% 穩定的 36 小時一般天氣預報 API
+    url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization={clean_key}&format=JSON"
     try:
-        # 加上 verify=False 讓 Python 直接放行政府網站的憑證
         resp = requests.get(url, timeout=10, verify=False) 
         
         if resp.status_code == 401:
@@ -34,8 +33,8 @@ def get_cwa_mountain_weather(api_key):
             return None, f"伺服器回應錯誤碼：{resp.status_code}"
             
         data = resp.json()
-        if 'records' in data and 'locations' in data['records']:
-            return data['records']['locations'][0]['location'], None
+        if 'records' in data and 'location' in data['records']:
+            return data['records']['location'], None
         else:
             return None, "氣象署回傳的資料格式變更或為空"
     except requests.exceptions.Timeout:
@@ -179,52 +178,58 @@ else:
             ))
 
         # ==========================================
-        # ⛅ 氣象署高山預報站
+        # ⛅ 高山專屬天氣預報站 (含智能海拔溫度換算)
         # ==========================================
-        st.write("### ⛅ 近期高山天氣預報 (中央氣象署)")
+        st.write("### ⛅ 近期高山天氣預報 (依縣市預報智能換算)")
         try:
             cwa_key = st.secrets["CWA_API_KEY"]
         except:
             cwa_key = None
             
         if cwa_key:
-            weather_data, error_msg = get_cwa_mountain_weather(cwa_key)
+            weather_data, error_msg = get_cwa_general_weather(cwa_key)
             if weather_data:
-                # 撈出氣象署有提供預報的「山區名稱」
-                mountain_names = [loc['locationName'] for loc in weather_data]
+                # 撈出各縣市名稱
+                city_names = [loc['locationName'] for loc in weather_data]
                 
-                # 預設選取關山 (南一段)
-                default_idx = mountain_names.index("關山") if "關山" in mountain_names else 0
+                # 預設選取高雄市 (南一段的主要涵蓋範圍)
+                default_idx = city_names.index("高雄市") if "高雄市" in city_names else 0
                 
-                selected_mt = st.selectbox("請選擇鄰近氣象站（南一段行程可參考「關山」）：", mountain_names, index=default_idx)
+                selected_city = st.selectbox("請選擇目標山岳所在縣市（南一段請選擇「高雄市」）：", city_names, index=default_idx)
                 
-                target_data = next((loc for loc in weather_data if loc['locationName'] == selected_mt), None)
+                target_data = next((loc for loc in weather_data if loc['locationName'] == selected_city), None)
                 if target_data:
                     try:
                         elements = target_data['weatherElement']
                         wx_list = next(e['time'] for e in elements if e['elementName'] == 'Wx')
-                        pop_list = next(e['time'] for e in elements if e['elementName'] == 'PoP12h')
+                        pop_list = next(e['time'] for e in elements if e['elementName'] == 'PoP')
                         mint_list = next(e['time'] for e in elements if e['elementName'] == 'MinT')
                         maxt_list = next(e['time'] for e in elements if e['elementName'] == 'MaxT')
                         
                         forecasts = []
-                        for i in range(min(6, len(wx_list))):
+                        for i in range(len(wx_list)):
                             start_time = wx_list[i]['startTime'][5:16] 
-                            wx_val = wx_list[i]['elementValue'][0]['value']
-                            pop_val = pop_list[i]['elementValue'][0]['value'] if i < len(pop_list) else "-"
-                            mint_val = mint_list[i]['elementValue'][0]['value'] if i < len(mint_list) else "-"
-                            maxt_val = maxt_list[i]['elementValue'][0]['value'] if i < len(maxt_list) else "-"
+                            wx_val = wx_list[i]['parameter']['parameterName']
+                            pop_val = pop_list[i]['parameter']['parameterName']
+                            mint_val = int(mint_list[i]['parameter']['parameterName'])
+                            maxt_val = int(maxt_list[i]['parameter']['parameterName'])
+                            
+                            # ✨ 智慧高山溫度換算：海拔上升 3000m，溫度大約下降 18 度
+                            mt_mint = mint_val - 18
+                            mt_maxt = maxt_val - 18
                             
                             forecasts.append({
-                                "預報時間": start_time,
-                                "天氣狀態": wx_val,
+                                "預報時間 (36小時)": start_time,
+                                "天氣預測": wx_val,
                                 "降雨機率(%)": pop_val,
-                                "氣溫(°C)": f"{mint_val} ~ {maxt_val}"
+                                "平地氣溫(°C)": f"{mint_val} ~ {maxt_val}",
+                                "🎯 陵線推估溫度(°C)": f"{mt_mint} ~ {mt_maxt}"
                             })
                         
                         st.dataframe(pd.DataFrame(forecasts), use_container_width=True, hide_index=True)
+                        st.caption("💡 上方【陵線推估溫度】是系統依據氣象學環境遞減率（每上升 100m 下降 0.6°C），以 3000 公尺高山基準自動為您換算的參考數值。")
                     except Exception as e:
-                        st.error("氣象資料格式解析發生錯誤，氣象署可能調整了資料結構。")
+                        st.error(f"氣象資料格式解析發生錯誤：{str(e)}")
             else:
                 st.error(f"⚠️ 無法取得氣象資料！\n\n**除錯雷達報告**：{error_msg}")
         else:

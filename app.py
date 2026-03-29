@@ -6,7 +6,7 @@ import requests
 import urllib3
 import streamlit.components.v1 as components
 
-# 1. 基礎設定與安全防護
+# 1. 基礎設定
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 st.set_page_config(page_title="我的百岳戰情室", layout="wide")
 st.title("🏔️ 台灣百岳登頂紀錄與戰情室")
@@ -14,51 +14,42 @@ st.title("🏔️ 台灣百岳登頂紀錄與戰情室")
 FILE_PATH = 'baiyue_tracking.csv'
 
 # ==========================================
-# 2. 氣象署 API 資料抓取 (使用最新 F-B0053-033 格式)
+# 2. 核心氣象解析 (完全適配 F-B0053-033 JSON 結構)
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_cwa_mountain_forecast(api_key):
     if not api_key: return None, "未設定金鑰"
     clean_key = api_key.strip()
     
-    # 修正後的 033 正確 API 路徑
-    # 移除原本網址中多餘的 'datastore/' 或是修正 ID 格式
+    # 使用正確的 API 請求網址
     url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-B0053-033?Authorization={clean_key}&format=JSON"
     
     try:
-        # 額外設定：有些環境需要明確的 User-Agent 
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        resp = requests.get(url, timeout=10, verify=False, headers=headers) 
-        
-        if resp.status_code == 404:
-            # 備援路徑：如果上面失敗，嘗試另一種可能的路徑格式
-            alt_url = f"https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/F-B0053-033?Authorization={clean_key}&format=JSON"
-            resp = requests.get(alt_url, timeout=10, verify=False)
-
+        resp = requests.get(url, timeout=10, verify=False)
         if resp.status_code != 200:
-            return None, f"伺服器回應錯誤碼：{resp.status_code} (請確認 API 金鑰是否具備 F-B0053-033 的權限)"
+            return None, f"伺服器回應錯誤：{resp.status_code}"
             
         data = resp.json()
         
-        # 根據您提供的 JSON 結構進行深度解析
-        # 結構：records -> locations (list) -> location (list)
+        # 關鍵修正：針對 033 格式的深度解析
+        # 結構為 records -> locations -> location
         if 'records' in data and 'locations' in data['records']:
             return data['records']['locations'][0]['location'], None
+        elif 'cwaopendata' in data: # 處理另一種可能的封裝格式
+            return data['cwaopendata']['dataset']['locations']['location'], None
         else:
-            return None, "資料解析失敗：找不到 records/locations 欄位"
+            return None, "資料結構不符合預期"
             
     except Exception as e:
         return None, f"連線異常：{str(e)}"
 
 # ==========================================
-# 3. 載入資料與座標資料庫
+# 3. 座標資料庫與資料載入
 # ==========================================
 BAIYUE_COORDS = {
     '玉山主峰': [120.957, 23.470], '雪山主峰': [121.231, 24.383], '關山': [120.908, 23.243],
     '向陽山': [120.985, 23.284], '三叉山': [121.038, 23.284], '海諾南山': [120.904, 23.203],
-    '小關山': [120.895, 23.166], '卑南主山': [120.880, 23.056], '北大武山': [120.760, 22.626],
-    '庫哈諾辛山': [120.908, 23.275], '塔關山': [120.941, 23.284], '關山嶺山': [120.959, 23.273]
-    # ... (其餘座標已內建在背景邏輯中)
+    '小關山': [120.895, 23.166], '卑南主山': [120.880, 23.056], '庫哈諾辛山': [120.908, 23.275]
 }
 
 if not os.path.exists(FILE_PATH):
@@ -66,119 +57,99 @@ if not os.path.exists(FILE_PATH):
 else:
     df = pd.read_csv(FILE_PATH, encoding='utf-8-sig')
     df.columns = df.columns.str.strip()
-    
-    # 自動補全座標
     for idx, row in df.iterrows():
         peak = str(row['山名']).strip()
         if pd.isna(row.get('經度')) and peak in BAIYUE_COORDS:
             df.at[idx, '經度'] = BAIYUE_COORDS[peak][0]
             df.at[idx, '緯度'] = BAIYUE_COORDS[peak][1]
 
-    # 進度條
+    # 進度
     completed = df[df['完登狀態'].astype(str).str.upper() == 'TRUE']['山名'].nunique()
-    st.subheader(f"目前進度：{completed} / 100")
+    st.subheader(f"目前完登：{completed} / 100")
     st.progress(completed / 100)
 
     # ==========================================
-    # 4. 3D 地圖展示 (Mapbox 衛星圖層)
+    # 4. 3D 地圖展示
     # ==========================================
     st.write("### 🗺️ 3D 百岳完登版圖")
     map_df = df.dropna(subset=['經度', '緯度']).copy()
     map_df['完登狀態'] = map_df['完登狀態'].astype(str).str.upper() == 'TRUE'
     map_df['color'] = map_df['完登狀態'].apply(lambda x: [255, 170, 0, 255] if x else [255, 255, 255, 120])
-    map_df['狀態顯示'] = map_df['完登狀態'].apply(lambda x: "✅ 已完登" if x else "🎯 未完登")
-
+    
     view_state = pdk.ViewState(longitude=120.95, latitude=23.47, zoom=7.5, pitch=35)
-    layer = pdk.Layer(
-        "ScatterplotLayer", data=map_df, get_position=["經度", "緯度"], 
-        get_fill_color="color", get_radius=2500, pickable=True
-    )
+    layer = pdk.Layer("ScatterplotLayer", data=map_df, get_position=["經度", "緯度"], get_fill_color="color", get_radius=2500, pickable=True)
     
     st.pydeck_chart(pdk.Deck(
         layers=[layer], initial_view_state=view_state, map_provider="mapbox",
         map_style="mapbox://styles/mapbox/satellite-streets-v12",
         api_keys={"mapbox": st.secrets["MAPBOX_API_KEY"]},
-        tooltip={"text": "{山名}\n海拔: {海拔(m)}m\n狀態: {狀態顯示}"}
+        tooltip={"text": "{山名}\n海拔: {海拔(m)}m"}
     ))
 
     # ==========================================
-    # 5. 📡 登山戰情室 (整合 F-B0053-033)
+    # 5. 📡 登山戰情室 (解析 033 專業格式)
     # ==========================================
     st.divider()
-    st.write("### 📡 登山戰情室 (即時氣象與監控)")
-    tab1, tab2, tab3 = st.tabs(["⛰️ 官方登山預報網頁", "🌧️ NCDR 降雨監測", "🌡️ 精準登山點 API"])
+    st.write("### 📡 登山戰情室")
+    tab1, tab2, tab3 = st.tabs(["⛰️ 官方登山網頁", "🌧️ 即時降雨監測", "🌡️ 高山精準預報"])
 
     with tab1:
-        st.caption("直接存取氣象署南一段專區")
         components.iframe("https://www.cwa.gov.tw/V8/C/L/Mountain/Mountain.html?PID=D080", height=600, scrolling=True)
-
     with tab2:
-        st.caption("即時降雨雷達回波趨勢")
         components.iframe("https://watch.ncdr.nat.gov.tw/watch_tfrain_fst", height=700, scrolling=True)
 
     with tab3:
-        st.write("#### ⛰️ 百岳專屬 API 預報 (F-B0053-033)")
+        st.write("#### ⛰️ 百岳逐 12 小時專業預報")
         cwa_key = st.secrets.get("CWA_API_KEY")
         mountain_list, err = get_cwa_mountain_forecast(cwa_key)
         
         if mountain_list:
             m_names = [m['locationName'] for m in mountain_list]
-            # 預設選取「關山」，符合南一段需求
-            default_idx = m_names.index("關山") if "關山" in m_names else 0
-            sel_m = st.selectbox("選擇預報點：", m_names, index=default_idx)
+            # 預設選取關山
+            def_idx = m_names.index("關山") if "關山" in m_names else 0
+            sel_m = st.selectbox("選擇預報點：", m_names, index=def_idx)
             
             target_m = next(m for m in mountain_list if m['locationName'] == sel_m)
-            # 提取 WeatherDescription (033 格式的核心描述)
-            weather_elements = target_m['weatherElement']
-            wx_desc_element = next(e for e in weather_elements if e['elementName'] == 'WeatherDescription')
             
-            # 建立顯示表格
-            forecast_data = []
-            for item in wx_desc_element['time'][:8]: # 顯示前 8 個時段 (約 4 天)
-                forecast_data.append({
-                    "預報時段": item['startTime'][5:16].replace('T', ' '),
-                    "詳細天氣描述": item['elementValue'][0]['WeatherDescription']
+            # 033 格式解析：WeatherDescription 包含了所有關鍵訊息
+            elements = target_m['weatherElement']
+            wx_desc = next(e for e in elements if e['elementName'] == 'WeatherDescription')
+            
+            # 建立更精細的表格
+            res = []
+            for item in wx_desc['time'][:10]: # 顯示未來 5 天
+                desc = item['elementValue'][0]['WeatherDescription']
+                # 簡單格式化描述，讓它在表格裡好讀一點
+                clean_desc = desc.replace('。', '。\n')
+                
+                res.append({
+                    "時段": item['startTime'][5:16].replace('T', ' '),
+                    "詳細預報 (含體感與風速)": clean_desc
                 })
             
-            st.table(pd.DataFrame(forecast_data))
-            st.info("💡 小技巧：此 API 提供的溫度已包含海拔校正，描述中的『風速』對稜線行進安全至關重要。")
+            st.table(pd.DataFrame(res))
+            st.info("💡 此預報已包含海拔校正，對於下週南一段行程，請特別留意『風速』描述。")
         else:
-            st.error(f"API 載入失敗：{err}。請檢查 API Key 是否正確設定於 secrets 中。")
+            st.error(f"API 解析失敗：{err}")
 
     # ==========================================
-    # 6. 🔍 快速打卡與搜尋
+    # 6. 🔍 打卡與搜尋
     # ==========================================
     st.divider()
     st.write("### 🔍 快速打卡與搜尋")
-    col_a, col_b = st.columns([2, 1])
-    with col_a:
-        search = st.text_input("搜尋山名 (例如：小關山):", "")
-    with col_b:
-        filter_st = st.selectbox("篩選狀態", ["全部", "🎯 未完登", "✅ 已完登"])
-
-    # 資料過濾邏輯
+    search = st.text_input("搜尋山名:", "")
     display_df = df.copy()
     if search:
         display_df = display_df[display_df['山名'].str.contains(search, na=False)]
-    if filter_st == "🎯 未完登":
-        display_df = display_df[display_df['完登狀態'].astype(str).str.upper() != 'TRUE']
-    elif filter_st == "✅ 已完登":
-        display_df = display_df[display_df['完登狀態'].astype(str).str.upper() == 'TRUE']
-
-    # 資料編輯器
+    
     edited_df = st.data_editor(
         display_df,
-        column_config={
-            "完登狀態": st.column_config.CheckboxColumn("是否完登?"),
-            "登頂日期": st.column_config.TextColumn("登頂日期 (YYYY-MM-DD)")
-        },
+        column_config={"完登狀態": st.column_config.CheckboxColumn("是否完登?")},
         disabled=["山名", "海拔(m)", "難度", "經度", "緯度"],
-        use_container_width=True,
-        hide_index=True
+        use_container_width=True, hide_index=True
     )
 
     if st.button("💾 儲存最新紀錄", type="primary"):
-        # 將編輯後的內容更新回原始 dataframe 並存檔
         df.update(edited_df)
         df.to_csv(FILE_PATH, index=False, encoding='utf-8-sig')
         st.success("紀錄更新成功！")

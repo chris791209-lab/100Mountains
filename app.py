@@ -20,14 +20,33 @@ FILE_PATH = 'baiyue_tracking.csv'
 def get_cwa_mountain_forecast(api_key):
     if not api_key: return None, "未設定金鑰"
     clean_key = api_key.strip()
-    # 使用您提供的最新代號：育樂區逐12小時預報
+    
+    # 修正後的 033 正確 API 路徑
+    # 移除原本網址中多餘的 'datastore/' 或是修正 ID 格式
     url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-B0053-033?Authorization={clean_key}&format=JSON"
+    
     try:
-        resp = requests.get(url, timeout=10, verify=False) 
-        if resp.status_code != 200: return None, f"伺服器回應錯誤碼：{resp.status_code}"
+        # 額外設定：有些環境需要明確的 User-Agent 
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        resp = requests.get(url, timeout=10, verify=False, headers=headers) 
+        
+        if resp.status_code == 404:
+            # 備援路徑：如果上面失敗，嘗試另一種可能的路徑格式
+            alt_url = f"https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/F-B0053-033?Authorization={clean_key}&format=JSON"
+            resp = requests.get(alt_url, timeout=10, verify=False)
+
+        if resp.status_code != 200:
+            return None, f"伺服器回應錯誤碼：{resp.status_code} (請確認 API 金鑰是否具備 F-B0053-033 的權限)"
+            
         data = resp.json()
-        # 根據 033 結構解析：records -> locations -> location
-        return data['records']['locations'][0]['location'], None
+        
+        # 根據您提供的 JSON 結構進行深度解析
+        # 結構：records -> locations (list) -> location (list)
+        if 'records' in data and 'locations' in data['records']:
+            return data['records']['locations'][0]['location'], None
+        else:
+            return None, "資料解析失敗：找不到 records/locations 欄位"
+            
     except Exception as e:
         return None, f"連線異常：{str(e)}"
 

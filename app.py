@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import pydeck as pdk
-import requests # 新增：用來向氣象署發送請求的套件
+import requests
 
 st.set_page_config(page_title="我的百岳紀錄 App", layout="wide")
 st.title("🏔️ 台灣百岳登頂紀錄與 3D 版圖")
@@ -14,20 +14,31 @@ if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
 # ==========================================
-# 氣象署 API 資料抓取與快取 (Cache)
-# 設定快取 1 小時 (3600秒)，避免頻繁重整網頁導致 API 額度被扣光
+# 氣象署 API 資料抓取與快取 (進階除錯版)
 # ==========================================
 @st.cache_data(ttl=3600)
-def get_mountain_weather(api_key):
+def get_cwa_mountain_weather(api_key):
+    # 清除金鑰前後可能不小心複製到的空白字元
+    clean_key = api_key.strip()
     # F-B0053-031 是氣象署的高山/遊憩區預報資料集
-    url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-B0053-031?Authorization={api_key}&format=JSON"
+    url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-B0053-031?Authorization={clean_key}&format=JSON"
     try:
-        resp = requests.get(url)
+        resp = requests.get(url, timeout=10)
+        # 檢查伺服器回應狀態
+        if resp.status_code == 401:
+            return None, "授權失敗 (401)。如果您是剛申請的授權碼，氣象署系統通常需要 10~15 分鐘才會正式開通，請喝口水稍後再試！"
+        elif resp.status_code != 200:
+            return None, f"伺服器回應錯誤碼：{resp.status_code}"
+            
         data = resp.json()
-        # 提取出所有山區的位置資料
-        return data['records']['locations'][0]['location']
+        if 'records' in data and 'locations' in data['records']:
+            return data['records']['locations'][0]['location'], None
+        else:
+            return None, "氣象署回傳的資料格式變更或為空"
+    except requests.exceptions.Timeout:
+        return None, "連線氣象署伺服器逾時，請檢查網路連線。"
     except Exception as e:
-        return None
+        return None, f"系統異常：{str(e)}"
 
 # ==========================================
 # 內建百岳經緯度資料庫
@@ -150,7 +161,6 @@ else:
                 bearing=0
             )
             
-            # 安全讀取 Mapbox 金鑰
             try:
                 mapbox_key = st.secrets["MAPBOX_API_KEY"]
             except:
@@ -175,17 +185,16 @@ else:
             cwa_key = None
             
         if cwa_key:
-            weather_data = get_mountain_weather(cwa_key)
+            weather_data, error_msg = get_cwa_mountain_weather(cwa_key)
             if weather_data:
                 # 撈出氣象署有提供預報的「山區名稱」
                 mountain_names = [loc['locationName'] for loc in weather_data]
                 
-                # 智慧預設：將預設選項設為「關山」，方便做南一段的功課
+                # 預設選取關山
                 default_idx = mountain_names.index("關山") if "關山" in mountain_names else 0
                 
-                selected_mt = st.selectbox("請選擇鄰近氣象站（南一段行程建議選擇「關山」）：", mountain_names, index=default_idx)
+                selected_mt = st.selectbox("請選擇鄰近氣象站（下週南一段行程可參考「關山」的預報）：", mountain_names, index=default_idx)
                 
-                # 取出所選山區的數據
                 target_data = next((loc for loc in weather_data if loc['locationName'] == selected_mt), None)
                 if target_data:
                     try:
@@ -196,9 +205,8 @@ else:
                         maxt_list = next(e['time'] for e in elements if e['elementName'] == 'MaxT')
                         
                         forecasts = []
-                        # 顯示未來 6 個時段的預報 (約三天份的精準資料)
                         for i in range(min(6, len(wx_list))):
-                            start_time = wx_list[i]['startTime'][5:16] # 擷取 MM-DD HH:mm
+                            start_time = wx_list[i]['startTime'][5:16] 
                             wx_val = wx_list[i]['elementValue'][0]['value']
                             pop_val = pop_list[i]['elementValue'][0]['value'] if i < len(pop_list) else "-"
                             mint_val = mint_list[i]['elementValue'][0]['value'] if i < len(mint_list) else "-"
@@ -215,7 +223,7 @@ else:
                     except Exception as e:
                         st.error("氣象資料格式解析發生錯誤，氣象署可能調整了資料結構。")
             else:
-                st.warning("無法取得氣象資料，請檢查 API 授權碼是否正確或網路是否連線。")
+                st.error(f"⚠️ 無法取得氣象資料！\n\n**除錯雷達報告**：{error_msg}")
         else:
             st.info("💡 尚未在 secrets.toml 設定氣象署 API 金鑰，請先完成設定以解鎖天氣功能。")
 

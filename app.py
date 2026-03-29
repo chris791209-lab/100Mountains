@@ -13,20 +13,25 @@ UPLOAD_DIR = 'uploads'
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
+import requests
+import urllib3 # 新增：用來關閉 SSL 警告
+
+# 關閉跳過 SSL 安檢時會彈出的煩人警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # ==========================================
-# 氣象署 API 資料抓取與快取 (進階除錯版)
+# 氣象署 API 資料抓取與快取 (無敵跳過安檢版)
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_cwa_mountain_weather(api_key):
-    # 清除金鑰前後可能不小心複製到的空白字元
     clean_key = api_key.strip()
-    # F-B0053-031 是氣象署的高山/遊憩區預報資料集
     url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-B0053-031?Authorization={clean_key}&format=JSON"
     try:
-        resp = requests.get(url, timeout=10)
-        # 檢查伺服器回應狀態
+        # 👉 關鍵修改：加上 verify=False 直接放行！
+        resp = requests.get(url, timeout=10, verify=False) 
+        
         if resp.status_code == 401:
-            return None, "授權失敗 (401)。如果您是剛申請的授權碼，氣象署系統通常需要 10~15 分鐘才會正式開通，請喝口水稍後再試！"
+            return None, "授權失敗 (401)。氣象署系統通常需要 10~15 分鐘才會正式開通，請稍後再試！"
         elif resp.status_code != 200:
             return None, f"伺服器回應錯誤碼：{resp.status_code}"
             

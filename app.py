@@ -3,6 +3,10 @@ import pandas as pd
 import os
 import pydeck as pdk
 import requests
+import urllib3
+
+# 關閉跳過 SSL 安檢時會彈出的煩人警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 st.set_page_config(page_title="我的百岳紀錄 App", layout="wide")
 st.title("🏔️ 台灣百岳登頂紀錄與 3D 版圖")
@@ -13,12 +17,6 @@ UPLOAD_DIR = 'uploads'
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
-import requests
-import urllib3 # 新增：用來關閉 SSL 警告
-
-# 關閉跳過 SSL 安檢時會彈出的煩人警告
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 # ==========================================
 # 氣象署 API 資料抓取與快取 (無敵跳過安檢版)
 # ==========================================
@@ -27,7 +25,7 @@ def get_cwa_mountain_weather(api_key):
     clean_key = api_key.strip()
     url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-B0053-031?Authorization={clean_key}&format=JSON"
     try:
-        # 👉 關鍵修改：加上 verify=False 直接放行！
+        # 加上 verify=False 讓 Python 直接放行政府網站的憑證
         resp = requests.get(url, timeout=10, verify=False) 
         
         if resp.status_code == 401:
@@ -181,7 +179,7 @@ else:
             ))
 
         # ==========================================
-        # ⛅ 氣象署高山預報站 (全新整合區塊)
+        # ⛅ 氣象署高山預報站
         # ==========================================
         st.write("### ⛅ 近期高山天氣預報 (中央氣象署)")
         try:
@@ -195,10 +193,10 @@ else:
                 # 撈出氣象署有提供預報的「山區名稱」
                 mountain_names = [loc['locationName'] for loc in weather_data]
                 
-                # 預設選取關山
+                # 預設選取關山 (南一段)
                 default_idx = mountain_names.index("關山") if "關山" in mountain_names else 0
                 
-                selected_mt = st.selectbox("請選擇鄰近氣象站（下週南一段行程可參考「關山」的預報）：", mountain_names, index=default_idx)
+                selected_mt = st.selectbox("請選擇鄰近氣象站（南一段行程可參考「關山」）：", mountain_names, index=default_idx)
                 
                 target_data = next((loc for loc in weather_data if loc['locationName'] == selected_mt), None)
                 if target_data:
@@ -240,7 +238,7 @@ else:
         
         col1, col2 = st.columns([2, 1])
         with col1:
-            search_term = st.text_input("輸入山名搜尋 (例如：玉山、關山)", "")
+            search_term = st.text_input("輸入山名搜尋 (例如：小關山、海諾南山)", "")
         with col2:
             filter_status = st.selectbox("狀態篩選", ["全部百岳", "🎯 未完登", "✅ 已完登"])
 

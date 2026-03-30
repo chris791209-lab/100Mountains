@@ -50,29 +50,68 @@ except Exception as e:
     st.warning(f"🔍 系統除錯詳細原因：{e}") # 這行會把真正的問題印出來
     st.stop()
 # ==========================================
-# 3. 會員登入系統 (Login System)
+# 3. 會員登入系統與註冊 (Login & Registration)
 # ==========================================
 if "current_user" not in st.session_state:
     st.session_state.current_user = None
 
 if st.session_state.current_user is None:
-    st.title("🔐 台灣百岳戰情室 - 系統登入")
-    st.write("請輸入您的專屬帳號密碼以載入個人百岳版圖與配速系統。")
+    st.title("🔐 台灣百岳戰情室 - 系統入口")
+    st.write("請登入您的專屬帳號，或建立新帳號以啟用個人百岳版圖與配速系統。")
     
-    with st.form("login_form"):
-        login_user = st.text_input("帳號 (Username)")
-        login_pass = st.text_input("密碼 (Password)", type="password")
-        submit_btn = st.form_submit_button("登入系統")
-        
-        if submit_btn:
-            # 驗證資料庫中的使用者
-            response = supabase.table("users").select("*").eq("username", login_user).eq("password", login_pass).execute()
-            if len(response.data) > 0:
-                st.session_state.current_user = login_user
-                st.success(f"歡迎回來，{login_user}！正在載入戰情室...")
-                st.rerun()
-            else:
-                st.error("帳號或密碼錯誤，請重新輸入。")
+    # 建立登入與註冊兩個分頁
+    tab_login, tab_register = st.tabs(["🔑 登入系統", "📝 建立新帳號"])
+    
+    # --- 分頁 1：登入系統 ---
+    with tab_login:
+        with st.form("login_form"):
+            login_user = st.text_input("帳號 (Username)")
+            login_pass = st.text_input("密碼 (Password)", type="password")
+            submit_btn = st.form_submit_button("登入系統", type="primary")
+            
+            if submit_btn:
+                if not login_user or not login_pass:
+                    st.error("請輸入帳號與密碼！")
+                else:
+                    response = supabase.table("users").select("*").eq("username", login_user).eq("password", login_pass).execute()
+                    if len(response.data) > 0:
+                        st.session_state.current_user = login_user
+                        st.success(f"歡迎回來，{login_user}！正在載入戰情室...")
+                        st.rerun()
+                    else:
+                        st.error("帳號或密碼錯誤，請重新輸入。")
+
+    # --- 分頁 2：註冊系統 ---
+    with tab_register:
+        with st.form("register_form"):
+            new_user = st.text_input("設定帳號名稱 (Username)", help="建議使用英文或數字，至少 3 個字元")
+            new_pass = st.text_input("設定密碼 (Password)", type="password")
+            new_pass_confirm = st.text_input("確認密碼 (Confirm Password)", type="password")
+            reg_submit = st.form_submit_button("註冊並開通帳號")
+            
+            if reg_submit:
+                # 防呆機制 1：檢查欄位是否空白
+                if not new_user or not new_pass or not new_pass_confirm:
+                    st.warning("所有欄位都必須填寫喔！")
+                # 防呆機制 2：檢查帳號長度
+                elif len(new_user) < 3:
+                    st.warning("帳號名稱太短了，請至少輸入 3 個字元。")
+                # 防呆機制 3：檢查密碼是否一致
+                elif new_pass != new_pass_confirm:
+                    st.error("兩次輸入的密碼不一致，請重新確認！")
+                else:
+                    # 防呆機制 4：檢查帳號是否已經存在於資料庫
+                    exist_check = supabase.table("users").select("*").eq("username", new_user).execute()
+                    if len(exist_check.data) > 0:
+                        st.error("這個帳號名稱已經有人使用了，請換一個更帥的！")
+                    else:
+                        try:
+                            # 正式寫入資料庫
+                            supabase.table("users").insert({"username": new_user, "password": new_pass}).execute()
+                            st.success("✅ 帳號建立成功！請點擊上方的「🔑 登入系統」分頁進行登入。")
+                        except Exception as e:
+                            st.error(f"註冊失敗，發生系統錯誤：{e}")
+                            
     st.stop() # 阻擋未登入者看到下方內容
 
 # ==========================================

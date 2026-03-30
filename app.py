@@ -118,10 +118,20 @@ elif page == "⏱️ 上河配速追蹤系統":
         st.session_state.hike_df = pd.DataFrame([{"分段地標": "起點", "上河步程": 0, "休息": 0, "抵達時刻": ""}])
         st.session_state.has_uploaded = False
 
-    # 處理上傳的 CSV 檔案 (智慧掃描表頭，相容嘉明湖範本)
+   # 處理上傳的 CSV 檔案 (智慧掃描表頭 + 智慧編碼偵測)
     if uploaded_file is not None and not st.session_state.get('has_uploaded'):
         try:
-            raw_df = pd.read_csv(uploaded_file, header=None)
+            # 🚀 新增：智慧編碼偵測 (先試 UTF-8，失敗則自動切換 Big5)
+            try:
+                raw_df = pd.read_csv(uploaded_file, header=None, encoding='utf-8')
+            except UnicodeDecodeError:
+                uploaded_file.seek(0) # 將檔案指標移回開頭
+                try:
+                    raw_df = pd.read_csv(uploaded_file, header=None, encoding='big5')
+                except UnicodeDecodeError:
+                    uploaded_file.seek(0)
+                    raw_df = pd.read_csv(uploaded_file, header=None, encoding='utf-8-sig')
+
             header_idx = -1
             # 智慧掃描：向下尋找包含「分段地標」的那一行作為標題
             for i, row in raw_df.iterrows():
@@ -142,10 +152,10 @@ elif page == "⏱️ 上河配速追蹤系統":
                         "休息": 0 
                     })
                 st.session_state.hike_df = pd.DataFrame(parsed_data)
-                st.session_state.has_uploaded = True # 標記為已上傳，避免重複解析
-                st.success("✅ 行程檔載入成功！")
+                st.session_state.has_uploaded = True # 標記為已上傳
+                st.success("✅ 行程檔載入成功！(自動解碼完成)")
             else:
-                st.error("CSV 檔案中找不到包含『分段地標』的標題行。請確認格式與範本相符。")
+                st.error("CSV 檔案中找不到包含『分段地標』的標題行。")
         except Exception as e:
             st.error(f"檔案讀取失敗：{e}")
 

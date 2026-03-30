@@ -33,6 +33,12 @@ def parse_sh_minutes(time_val):
 # ==========================================
 @st.cache_resource
 def init_connection() -> Client:
+    # 這裡加入除錯訊息，確定系統有沒有讀到 Secrets
+    if "SUPABASE_URL" not in st.secrets:
+        raise ValueError("系統找不到 SUPABASE_URL，請確認 Secrets 是否有存檔。")
+    if "SUPABASE_KEY" not in st.secrets:
+        raise ValueError("系統找不到 SUPABASE_KEY，請確認 Secrets 是否有存檔。")
+        
     url = st.secrets["SUPABASE_URL"]
     key = st.secrets["SUPABASE_KEY"]
     return create_client(url, key)
@@ -40,9 +46,9 @@ def init_connection() -> Client:
 try:
     supabase = init_connection()
 except Exception as e:
-    st.error("資料庫連線失敗，請檢查 Secrets 設定。")
+    st.error("❌ 資料庫連線失敗！")
+    st.warning(f"🔍 系統除錯詳細原因：{e}") # 這行會把真正的問題印出來
     st.stop()
-
 # ==========================================
 # 3. 會員登入系統 (Login System)
 # ==========================================

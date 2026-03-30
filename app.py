@@ -100,7 +100,7 @@ if page == "🗺️ 百岳紀錄&氣象情報":
             st.rerun()
 
 # ==========================================
-# 4. 系統 B：上河配速追蹤系統 (淨化版)
+# 4. 系統 B：上河配速追蹤系統
 # ==========================================
 elif page == "⏱️ 上河配速追蹤系統":
     st.title("⏱️ 上河配速追蹤系統")
@@ -183,9 +183,9 @@ elif page == "⏱️ 上河配速追蹤系統":
     with col_i1:
         target_c = st.number_input("🎯 設定目標配速 (計算 ETA)", min_value=0.3, max_value=2.0, value=0.8, step=0.1)
     with col_i2:
-        input_km = st.number_input("📍 手錶總里程 (km)", min_value=0.0, value=0.0, step=0.5, help="請填入手錶或 GPX 預估的總里程")
+        input_km = st.number_input("📍 裝置紀錄總里程 (km)", min_value=0.0, value=0.0, step=0.5, help="請填入手錶或 GPX 預估的總里程")
     with col_i3:
-        input_asc = st.number_input("⛰️ 手錶總爬升 (m)", min_value=0, value=0, step=50, help="請填入手錶或 GPX 預估的總爬升")
+        input_asc = st.number_input("⛰️ 裝置記錄總爬升 (m)", min_value=0, value=0, step=50, help="請填入手錶或 GPX 預估的總爬升")
 
     analyze_btn = st.button("📊 開始運算 (生成 ETA 與 體能指數)", type="primary", use_container_width=True)
 
@@ -280,7 +280,7 @@ elif page == "⏱️ 上河配速追蹤系統":
             col_m3.metric("總耗力指數 (EP)", f"{round(ep_val, 1)}")
             col_m4.metric("速度指數 (EP/hr)", f"{ep_hr}", help="通常 EP/hr 落在 3~4 為一般健行，5以上代表推進快速")
             
-            st.write("#### 📈 動態行程推算表 (清爽版)")
+            st.write("#### 📈 動態行程推算表")
             st.caption(f"✨ 表格已過濾無關雜訊，專注呈現未來每個 CP 點的 ETA。")
             
             # 只顯示純粹的配速推算，不顯示總結

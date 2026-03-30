@@ -186,10 +186,9 @@ elif page == "⏱️ 上河配速追蹤系統":
     st.divider()
     col_c1, col_c2 = st.columns([1, 2])
     with col_c1:
-        # 目標配速輸入框
         target_c = st.number_input("🎯 設定目標配速 (推算 ETA 用)", min_value=0.3, max_value=2.0, value=0.8, step=0.1)
     with col_c2:
-        st.write("") # 排版對齊用
+        st.write("") 
         st.write("")
         analyze_btn = st.button("📊 計算當前配速 & 推算 ETA", type="primary", use_container_width=True)
 
@@ -198,8 +197,10 @@ elif page == "⏱️ 上河配速追蹤系統":
             calc_df = edited_df.copy()
             coeffs = []
             
+            # 💡 修復關鍵：預先建立所有必要欄位，防止未填資料時引發 KeyError
             calc_df["預估耗時(分)"] = ""
             calc_df["預估抵達時刻"] = ""
+            calc_df["分段係數"] = "" 
             
             # --- 第一階段：計算已完成路段的真實係數 ---
             for i in range(1, len(calc_df)):
@@ -218,7 +219,6 @@ elif page == "⏱️ 上河配速追蹤系統":
                     
                     walk_min = actual_min - float(rest_min)
                     
-                    # 防呆機制：休息大於經過時間
                     if walk_min < 0:
                         walk_min = 0 
                         st.toast(f"⚠️ 警告：{calc_df.iloc[i]['分段地標']} 的休息時間大於實際經過時間！")
@@ -230,7 +230,7 @@ elif page == "⏱️ 上河配速追蹤系統":
 
             avg_c = round(sum(coeffs) / len(coeffs), 2) if coeffs else 0.0
             
-            # --- 第二階段：動態推算未來的 ETA (使用 target_c) ---
+            # --- 第二階段：動態推算未來的 ETA ---
             last_known_time = None
             for i in range(len(calc_df)):
                 t_curr = calc_df.iloc[i]["抵達時刻"]

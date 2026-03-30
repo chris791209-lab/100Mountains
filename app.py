@@ -4,7 +4,7 @@ import os
 import pydeck as pdk
 import urllib3
 import streamlit.components.v1 as components
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ==========================================
 # 1. 基礎設定與輔助函數
@@ -104,7 +104,7 @@ if page == "🗺️ 百岳紀錄&氣象情報":
             st.rerun()
 
 # ==========================================
-# 4. 系統 B：上河配速追蹤系統 (極簡上傳版)
+# 4. 系統 B：上河配速追蹤系統 (支援戰術 ETA 模擬)
 # ==========================================
 elif page == "⏱️ 上河配速追蹤系統":
     st.title("⏱️ 上河配速追蹤系統")
@@ -118,14 +118,14 @@ elif page == "⏱️ 上河配速追蹤系統":
         st.session_state.hike_df = pd.DataFrame([{"分段地標": "起點", "上河步程": 0, "休息": 0, "抵達時刻": ""}])
         st.session_state.has_uploaded = False
 
-   # 處理上傳的 CSV 檔案 (智慧掃描表頭 + 智慧編碼偵測)
+    # 處理上傳的 CSV 檔案 (智慧掃描表頭 + 智慧編碼偵測)
     if uploaded_file is not None and not st.session_state.get('has_uploaded'):
         try:
-            # 🚀 新增：智慧編碼偵測 (先試 UTF-8，失敗則自動切換 Big5)
+            # 🚀 智慧編碼偵測 (先試 UTF-8，失敗則自動切換 Big5)
             try:
                 raw_df = pd.read_csv(uploaded_file, header=None, encoding='utf-8')
             except UnicodeDecodeError:
-                uploaded_file.seek(0) # 將檔案指標移回開頭
+                uploaded_file.seek(0)
                 try:
                     raw_df = pd.read_csv(uploaded_file, header=None, encoding='big5')
                 except UnicodeDecodeError:
@@ -166,14 +166,13 @@ elif page == "⏱️ 上河配速追蹤系統":
     st.write("### 📝 實時配速紀錄表")
     st.caption("💡 可動態新增列，或直接在『實際抵達』輸入 HH:MM 格式時間 (例如：08:45)")
 
-   # 動態資料編輯器 (修復 TypeError 版本)
+    # 動態資料編輯器
     edited_df = st.data_editor(
         st.session_state.hike_df,
         num_rows="dynamic",
         column_config={
             "分段地標": st.column_config.TextColumn("地標 / CP點", width="medium"),
             "上河步程": st.column_config.NumberColumn("上河標準(分)"),
-            # 💡 修正處：將 placeholder 替換為 help
             "抵達時刻": st.column_config.TextColumn("實際抵達 (HH:MM)", help="請輸入 24 小時制時間，例: 08:30"),
             "休息": st.column_config.NumberColumn("預計休息(分)")
         },
@@ -181,20 +180,35 @@ elif page == "⏱️ 上河配速追蹤系統":
         key="hike_editor"
     )
 
-    if st.button("📊 開始分析目前配速", type="primary"):
+    # ==========================================
+    # 🌟 戰術模擬控制區 (ETA 推算)
+    # ==========================================
+    st.divider()
+    col_c1, col_c2 = st.columns([1, 2])
+    with col_c1:
+        # 目標配速輸入框
+        target_c = st.number_input("🎯 設定目標配速 (推算 ETA 用)", min_value=0.3, max_value=2.0, value=0.8, step=0.1)
+    with col_c2:
+        st.write("") # 排版對齊用
+        st.write("")
+        analyze_btn = st.button("📊 計算當前配速 & 推算 ETA", type="primary", use_container_width=True)
+
+    if analyze_btn:
         try:
             calc_df = edited_df.copy()
             coeffs = []
             
+            calc_df["預估耗時(分)"] = ""
+            calc_df["預估抵達時刻"] = ""
+            
+            # --- 第一階段：計算已完成路段的真實係數 ---
             for i in range(1, len(calc_df)):
                 t_curr = calc_df.iloc[i]["抵達時刻"]
                 t_prev = calc_df.iloc[i-1]["抵達時刻"]
                 sh_min = calc_df.iloc[i].get("上河步程", 0)
                 
-                # 只有當前後兩站都有填時間時，才進行計算
                 if pd.notna(t_curr) and t_curr != "" and pd.notna(t_prev) and t_prev != "":
                     fmt = "%H:%M"
-                    # 處理時間差 (包含跨夜邏輯)
                     delta = datetime.strptime(str(t_curr), fmt) - datetime.strptime(str(t_prev), fmt)
                     actual_min = delta.total_seconds() / 60
                     if actual_min < 0: actual_min += 24 * 60 
@@ -202,34 +216,61 @@ elif page == "⏱️ 上河配速追蹤系統":
                     rest_min = calc_df.iloc[i-1].get("休息", 0)
                     if pd.isna(rest_min): rest_min = 0
                     
-                    # 純步行時間 = 實際花費時間 - 上一站的休息時間
                     walk_min = actual_min - float(rest_min)
                     
-                    if sh_min > 0:
+                    # 防呆機制：休息大於經過時間
+                    if walk_min < 0:
+                        walk_min = 0 
+                        st.toast(f"⚠️ 警告：{calc_df.iloc[i]['分段地標']} 的休息時間大於實際經過時間！")
+                    
+                    if float(sh_min) > 0:
                         c = round(walk_min / float(sh_min), 2)
                         calc_df.at[i, "分段係數"] = c
                         coeffs.append(c)
+
+            avg_c = round(sum(coeffs) / len(coeffs), 2) if coeffs else 0.0
             
-            # 顯示分析結果
-            if coeffs:
-                avg_c = round(sum(coeffs) / len(coeffs), 2)
-                st.divider()
-                col1, col2 = st.columns(2)
-                col1.metric("當前平均步程係數 (C)", avg_c)
+            # --- 第二階段：動態推算未來的 ETA (使用 target_c) ---
+            last_known_time = None
+            for i in range(len(calc_df)):
+                t_curr = calc_df.iloc[i]["抵達時刻"]
                 
-                if avg_c < 0.7: status = "🏃 越野跑模式 (極快)"
-                elif avg_c < 0.9: status = "🔥 強健推行 (超前)"
-                elif avg_c <= 1.0: status = "✅ 穩定配速 (標準)"
-                else: status = "⚠️ 體能衰退或地形困難"
-                
-                col2.metric("體能狀態推估", status)
-                
-                st.write("#### 📈 分段詳細數據")
-                # 過濾出有打卡時間的欄位來顯示
-                display_result = calc_df[calc_df["抵達時刻"].astype(str) != ""].copy()
-                st.dataframe(display_result[["分段地標", "抵達時刻", "休息", "上河步程", "分段係數"]], use_container_width=True)
-            else:
-                st.warning("請至少輸入兩個連續 CP 點的『抵達時刻』以進行計算。")
-                
+                if pd.notna(t_curr) and t_curr != "":
+                    last_known_time = datetime.strptime(str(t_curr), "%H:%M")
+                    calc_df.at[i, "預估抵達時刻"] = "✅ 已打卡"
+                else:
+                    if last_known_time is not None:
+                        rest = calc_df.iloc[i-1].get("休息", 0)
+                        if pd.isna(rest): rest = 0
+                        
+                        sh_min = calc_df.iloc[i].get("上河步程", 0)
+                        if pd.isna(sh_min): sh_min = 0
+                        
+                        est_walk_min = float(sh_min) * target_c
+                        
+                        total_add_min = int(float(rest) + est_walk_min)
+                        last_known_time = last_known_time + timedelta(minutes=total_add_min)
+                        
+                        calc_df.at[i, "預估耗時(分)"] = int(est_walk_min)
+                        calc_df.at[i, "預估抵達時刻"] = f"🕒 {last_known_time.strftime('%H:%M')}"
+
+            # --- 第三階段：顯示戰情面板 ---
+            col_m1, col_m2, col_m3 = st.columns(3)
+            col_m1.metric("當前實際平均配速", f"{avg_c}" if avg_c > 0 else "尚未計算")
+            col_m2.metric("模擬設定配速", f"{target_c}")
+            
+            if avg_c == 0: status = "準備出發"
+            elif avg_c < 0.7: status = "🏃 越野跑模式 (神速)"
+            elif avg_c < 0.9: status = "🔥 強健推行 (超前)"
+            elif avg_c <= 1.0: status = "✅ 穩定配速 (標準)"
+            else: status = "⚠️ 體能衰退或地形困難"
+            col_m3.metric("實際體能狀態", status)
+            
+            st.write("#### 📈 動態行程推算表")
+            st.caption(f"✨ 未來的抵達時間，是以你設定的 **{target_c}** 模擬配速進行推算。")
+            
+            display_cols = ["分段地標", "抵達時刻", "預估抵達時刻", "預估耗時(分)", "上河步程", "休息", "分段係數"]
+            st.dataframe(calc_df[display_cols], use_container_width=True)
+
         except Exception as e:
             st.error(f"計算出錯，請確保時間格式為 HH:MM (如 08:30)。錯誤詳情: {e}")

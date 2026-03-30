@@ -156,14 +156,15 @@ elif page == "⏱️ 上河配速追蹤系統":
     st.write("### 📝 實時配速紀錄表")
     st.caption("💡 可動態新增列，或直接在『實際抵達』輸入 HH:MM 格式時間 (例如：08:45)")
 
-    # 動態資料編輯器
+   # 動態資料編輯器 (修復 TypeError 版本)
     edited_df = st.data_editor(
         st.session_state.hike_df,
         num_rows="dynamic",
         column_config={
             "分段地標": st.column_config.TextColumn("地標 / CP點", width="medium"),
             "上河步程": st.column_config.NumberColumn("上河標準(分)"),
-            "抵達時刻": st.column_config.TextColumn("實際抵達 (HH:MM)", placeholder="例: 08:30"),
+            # 💡 修正處：將 placeholder 替換為 help
+            "抵達時刻": st.column_config.TextColumn("實際抵達 (HH:MM)", help="請輸入 24 小時制時間，例: 08:30"),
             "休息": st.column_config.NumberColumn("預計休息(分)")
         },
         use_container_width=True,

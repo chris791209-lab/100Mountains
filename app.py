@@ -100,7 +100,7 @@ if page == "🗺️ 百岳紀錄&氣象情報":
             st.rerun()
 
 # ==========================================
-# 4. 系統 B：上河配速追蹤系統 (EP 耗力指數版)
+# 4. 系統 B：上河配速追蹤系統 (淨化版)
 # ==========================================
 elif page == "⏱️ 上河配速追蹤系統":
     st.title("⏱️ 上河配速追蹤系統")
@@ -135,8 +135,10 @@ elif page == "⏱️ 上河配速追蹤系統":
                 raw_df.columns = raw_df.iloc[header_idx]
                 clean_df = raw_df.iloc[header_idx+1:].dropna(subset=["分段地標"]).copy()
                 
-                # 💡 新增過濾機制：移除範本底部的無用列 (如 總時間、完成)
-                clean_df = clean_df[~clean_df["分段地標"].astype(str).str.contains("總時間|完成|共休息", na=False)]
+                # 💡 強力過濾機制：徹底移除範本底部的所有總結列
+                exclude_keywords = ["總時間", "完成", "共休息", "總里程", "總爬升", "耗力指數", "速度指數"]
+                pattern = "|".join(exclude_keywords)
+                clean_df = clean_df[~clean_df["分段地標"].astype(str).str.contains(pattern, na=False, regex=True)]
                 
                 parsed_data = []
                 for _, row in clean_df.iterrows():
@@ -148,7 +150,7 @@ elif page == "⏱️ 上河配速追蹤系統":
                     })
                 st.session_state.hike_df = pd.DataFrame(parsed_data)
                 st.session_state.has_uploaded = True 
-                st.success("✅ 行程檔載入成功！(自動過濾底部總結列)")
+                st.success("✅ 行程檔載入成功！(已自動過濾底部多餘的統計列)")
             else:
                 st.error("CSV 檔案中找不到包含『分段地標』的標題行。")
         except Exception as e:
@@ -172,7 +174,7 @@ elif page == "⏱️ 上河配速追蹤系統":
     )
 
     # ==========================================
-    # 🌟 新增：外部數據輸入區 (用於計算 EP)
+    # 🌟 外部數據輸入與戰術分析
     # ==========================================
     st.divider()
     st.write("### ⚙️ 戰術模擬與數據彙整")
@@ -200,8 +202,8 @@ elif page == "⏱️ 上河配速追蹤系統":
             first_valid_time = None
             for i in range(len(calc_df)):
                 t = calc_df.iloc[i]["抵達時刻"]
-                if pd.notna(t) and t != "":
-                    first_valid_time = datetime.strptime(str(t), "%H:%M")
+                if pd.notna(t) and str(t).strip() != "":
+                    first_valid_time = datetime.strptime(str(t).strip(), "%H:%M")
                     break
 
             for i in range(1, len(calc_df)):
@@ -209,9 +211,9 @@ elif page == "⏱️ 上河配速追蹤系統":
                 t_prev = calc_df.iloc[i-1]["抵達時刻"]
                 sh_min = calc_df.iloc[i].get("上河步程", 0)
                 
-                if pd.notna(t_curr) and t_curr != "" and pd.notna(t_prev) and t_prev != "":
+                if pd.notna(t_curr) and str(t_curr).strip() != "" and pd.notna(t_prev) and str(t_prev).strip() != "":
                     fmt = "%H:%M"
-                    delta = datetime.strptime(str(t_curr), fmt) - datetime.strptime(str(t_prev), fmt)
+                    delta = datetime.strptime(str(t_curr).strip(), fmt) - datetime.strptime(str(t_prev).strip(), fmt)
                     actual_min = delta.total_seconds() / 60
                     if actual_min < 0: actual_min += 24 * 60 
                     
@@ -233,8 +235,8 @@ elif page == "⏱️ 上河配速追蹤系統":
             for i in range(len(calc_df)):
                 t_curr = calc_df.iloc[i]["抵達時刻"]
                 
-                if pd.notna(t_curr) and t_curr != "":
-                    last_known_time = datetime.strptime(str(t_curr), "%H:%M")
+                if pd.notna(t_curr) and str(t_curr).strip() != "":
+                    last_known_time = datetime.strptime(str(t_curr).strip(), "%H:%M")
                     calc_df.at[i, "預估抵達時刻"] = "✅ 已打卡"
                 else:
                     if last_known_time is not None:
@@ -250,16 +252,17 @@ elif page == "⏱️ 上河配速追蹤系統":
                         calc_df.at[i, "預估耗時(分)"] = int(est_walk_min)
                         calc_df.at[i, "預估抵達時刻"] = f"🕒 {last_known_time.strftime('%H:%M')}"
 
-            # --- 計算總結數據 (Total Time, EP, EP/hr) ---
+            # --- 計算總結數據 ---
             total_hours = 0.0
             total_time_str = "請先輸入出發時間"
             
             if first_valid_time and last_known_time:
-                # 總經過分鐘數 (包含休息)
+                # 計算從出發到終點的總耗時
                 total_minutes = (last_known_time - first_valid_time).total_seconds() / 60
+                if total_minutes < 0: total_minutes += 24 * 60 # 處理跨日問題
                 total_hours = total_minutes / 60
                 
-                # 將總時間轉為 hh:mm 格式顯示
+                # 格式化為 HH:MM 顯示
                 hh = int(total_minutes // 60)
                 mm = int(total_minutes % 60)
                 total_time_str = f"{hh} 小時 {mm} 分"
@@ -278,7 +281,7 @@ elif page == "⏱️ 上河配速追蹤系統":
             col_m4.metric("速度指數 (EP/hr)", f"{ep_hr}", help="通常 EP/hr 落在 3~4 為一般健行，5以上代表推進快速")
             
             st.write("#### 📈 動態行程推算表 (清爽版)")
-            st.caption(f"✨ 系統已移除多餘總結列，專注呈現未來每個 CP 點的 ETA。")
+            st.caption(f"✨ 表格已過濾無關雜訊，專注呈現未來每個 CP 點的 ETA。")
             
             # 只顯示純粹的配速推算，不顯示總結
             display_cols = ["分段地標", "抵達時刻", "預估抵達時刻", "預估耗時(分)", "上河步程", "休息", "分段係數"]

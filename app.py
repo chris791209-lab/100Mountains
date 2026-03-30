@@ -261,8 +261,8 @@ elif page == "⏱️ 上河配速追蹤系統":
             
             if avg_c == 0: status = "準備出發"
             elif avg_c < 0.7: status = "🏃 越野跑模式 (神速)"
-            elif avg_c < 0.9: status = "🔥 強健推行 (超前)"
-            elif avg_c <= 1.0: status = "✅ 穩定配速 (標準)"
+            elif avg_c < 0.8: status = "🔥 強健推行 (超前)"
+            elif avg_c <= 0.9: status = "✅ 穩定配速 (標準)"
             else: status = "⚠️ 體能衰退或地形困難"
             col_m3.metric("實際體能狀態", status)
             

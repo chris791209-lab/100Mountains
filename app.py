@@ -138,7 +138,7 @@ if page == "🗺️ 百岳紀錄&氣象情報":
         '小關山': [120.895, 23.166], '卑南主山': [120.880, 23.056], '庫哈諾辛山': [120.908, 23.275]
     }
 
-   if not os.path.exists(FILE_PATH):
+    if not os.path.exists(FILE_PATH):
         st.error(f"找不到百岳基礎清單檔案：{FILE_PATH}")
     else:
         # 1. 讀取基礎唯讀清單
@@ -153,7 +153,10 @@ if page == "🗺️ 百岳紀錄&氣象情報":
         
         # 補全座標
         for idx, row in df.iterrows():
-
+            peak = str(row['山名']).strip()
+            if pd.isna(row.get('經度')) and peak in BAIYUE_COORDS:
+                df.at[idx, '經度'] = BAIYUE_COORDS[peak][0]
+                df.at[idx, '緯度'] = BAIYUE_COORDS[peak][1]
         # 2. 從 Supabase 抓取當前使用者的紀錄
         try:
             db_res = supabase.table("baiyue_progress").select("*").eq("username", st.session_state.current_user).execute()
